@@ -1,44 +1,42 @@
+/*
+    Video: https://www.youtube.com/watch?v=oCMOYS71NIU
+    Based on Neil Kolban example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleNotify.cpp
+    Ported to Arduino ESP32 by Evandro Copercini
+   Create a BLE server that, once we receive a connection, will send periodic notifications.
+   The service advertises itself as: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+   Has a characteristic of: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E - used for receiving data with "WRITE" 
+   Has a characteristic of: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E - used to send data with  "NOTIFY"
+   The design of creating the BLE server is:
+   1. Create a BLE Server
+   2. Create a BLE Service
+   3. Create a BLE Characteristic on the Service
+   4. Create a BLE Descriptor on the characteristic
+   5. Start the service.
+   6. Start advertising.
+   In this example rxValue is the data received (only accessible inside that function).
+   And txValue is the data to be sent, in this example just a byte incremented every second. 
+*/
 #define FASTLED_ALLOW_INTERRUPTS 0
 #define FASTLED_INTERRUPT_RETRY_COUNT 1
 
-#include "FastLED.h"
-#include <SoftwareSerial.h>
-SoftwareSerial BTserial(2, 3); // RX | TX
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+#include <FastLED.h>
 
 FASTLED_USING_NAMESPACE
 
-// FastLED "100-lines-of-code" demo reel, showing just a few 
-// of the kinds of animation patterns you can quickly and easily 
-// compose using FastLED.  
-//
-// This example also shows one easy way to define multiple 
-// animations patterns and have them automatically rotate.
-//
-// -Mark Kriegsman, December 2014
-
-#if defined(FASTLED_VERSION) && (FASTLED_VERSION < 3001000)
-#warning "Requires FastLED 3.1 or later; check github for latest code."
-#endif
-
-#define DATA_PIN    6
+#define DATA_PIN    23
 //#define CLK_PIN   4
 #define LED_TYPE    WS2812
 #define COLOR_ORDER GRB
 #define NUM_LEDS    49
 CRGB leds[NUM_LEDS];
 
-#define BRIGHTNESS          96
+//#define BRIGHTNESS          96
+int brightness = 100;
 #define FRAMES_PER_SECOND  60
-char c = ' ';
-char r = ' ';
-char mode = 'W';
-char last_mode = 'W';
-char MODE_WHITE = 'W';
-char MODE_DEMO = 'D';
-char MODE_KNIGHT = 'K';
-char MODE_KNIGHT2 = '2';
-char MODE_FIRE = 'F';
-char HELP = 'H';
 
 bool gReverseDirection = false;
 // COOLING: How much does the air cool as it rises?
@@ -50,121 +48,196 @@ bool gReverseDirection = false;
 // Higher chance = more roaring fire.  Lower chance = more flickery fire.
 // Default 120, suggested range 50-200.
 #define SPARKING 30
- 
-// BTconnected will = false when not connected and true when connected
-boolean BTconnected = false;
- 
-// connect the STATE pin to Arduino pin D4
-const byte BTpin = 4;
 
-void setup() {
-  // set the BTpin for input
-  pinMode(BTpin, INPUT);
-  Serial.begin(9600);
-  Serial.println("Arduino is ready");
-  Serial.println("Connect the HC-05 to an Android device to continue");
-  // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+char mode = 'W';
+char last_mode = 'W';
+char MODE_WHITE = 'W';
+char MODE_DEMO = 'D';
+char MODE_KNIGHT = 'K';
+char MODE_KNIGHT2 = '2';
+char MODE_FIRE = 'F';
+char HELP = 'H';
 
-  // set master brightness control
-  FastLED.setBrightness(BRIGHTNESS);
-  pinMode(13, OUTPUT);
-  //for( int i = 0; i < NUM_LEDS; i++) {
-    digitalWrite(13, HIGH);
-  //  delay(10);
-  //  digitalWrite(13, LOW);
-  //  delay(10);
-  //}
-  BTserial.begin(9600);
-  delay(10);
-  helpMsg();
-}
-
-void helpMsg() {
-  BTserial.write("Welcome to ConsultingJoe's Alfa Romeo RGB LED System\n\n*SELECT A COMMAND*\nW = White\nD = Demo Reel\nK = Knight Rider/Cylon\nF = Fire\n\n");
-}
-
-// List of patterns to cycle through.  Each is defined as a separate function below.
-typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
-
+BLEServer *pServer = NULL;
+BLECharacteristic * pTxCharacteristic;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint8_t txValue = 0;
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
 
-void fadeall() { for(int i = 0; i < NUM_LEDS; i++) { leds[i].nscale8(250); } }
+// See the following for generating UUIDs:
+// https://www.uuidgenerator.net/
 
-void checkNewMode() {
- //if (BTserial.available()){
-      last_mode = mode;
-      c = BTserial.read();
-      Serial.write(c);
-      if(c == MODE_WHITE){
-        mode = MODE_WHITE;
-        BTserial.write("White\n");
-      }else if((c == MODE_KNIGHT || c == MODE_KNIGHT2) && last_mode != MODE_KNIGHT){
-        mode = MODE_KNIGHT;
-        BTserial.write("Knight Rider 1 (-)\n");
-      }else if(c == MODE_KNIGHT && last_mode == MODE_KNIGHT){
-        mode = MODE_KNIGHT2;
-        BTserial.write("Knight Rider 2 (V)\n");
-      }else if(c == MODE_DEMO){
-        mode = MODE_DEMO;
-        BTserial.write("Demo\n");
-      }else if(c == MODE_FIRE){
-        mode = MODE_FIRE;
-        BTserial.write("Fire\n");
-      }else if(c == HELP){
-        helpMsg();
-      }
- //} 
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+
+void respond(std::string myVal) {
+
+    if(myVal.at(0) == 'B' && myVal.length() > 1 && myVal.length() < 8){
+      String myBrightness = myVal.c_str();
+      myBrightness.trim();
+      myBrightness.remove(0,1);
+      brightness = myBrightness.toInt();
+      brightness = max(0, min(100, brightness));
+      String res = "Brightness: " + String(brightness) + "%\n";
+      Serial.print(res);
+      pTxCharacteristic->setValue(res.c_str());
+      pTxCharacteristic->notify();
+      FastLED.setBrightness(brightness);
+    }else if(myVal[0] == MODE_WHITE){
+      mode = MODE_WHITE;
+      pTxCharacteristic->setValue("White\n");
+      pTxCharacteristic->notify();
+    }else if(myVal[0] == MODE_KNIGHT){
+      mode = MODE_KNIGHT;
+      pTxCharacteristic->setValue("Knight Rider 1 (-)\n");
+      pTxCharacteristic->notify();
+    }else if(myVal[0] == MODE_KNIGHT2){
+      mode = MODE_KNIGHT2;
+      pTxCharacteristic->setValue("Knight Rider 2 (V)\n");
+      pTxCharacteristic->notify();
+    }else if(myVal[0] == MODE_DEMO){
+      mode = MODE_DEMO;
+      pTxCharacteristic->setValue("Demo\n");
+      pTxCharacteristic->notify();
+    }else if(myVal[0] == MODE_FIRE){
+      mode = MODE_FIRE;
+      pTxCharacteristic->setValue("Fire\n");
+      pTxCharacteristic->notify();
+    }else if(myVal[0] == HELP){
+      helpMsg();
+    }
 }
 
-void loop()
-{
-  static uint8_t hue = 0;
-  //if ( digitalRead(BTpin)==HIGH)  { BTconnected = true;};
-  // Keep reading from the HC-05 and send to Arduino Serial Monitor
-  checkNewMode();
-  if(mode == MODE_DEMO){
-    gPatterns[gCurrentPatternNumber]();
-    checkNewMode();
-    FastLED.show();
-    FastLED.delay(8);
-    //EVERY_N_MILLISECONDS( 3 ) {
-      gHue++;
-    //} // slowly cycle the "base color" through the rainbow
-    EVERY_N_SECONDS( 5 ) { nextPattern(); } // change patterns periodically
-  }else if(mode == MODE_WHITE){
-    fill_solid(leds, NUM_LEDS, CRGB::White);
-    checkNewMode();
-    FastLED.show();
-  }else if(mode == MODE_KNIGHT){
-    knightRider();
-    checkNewMode();
-    FastLED.show();  
-    FastLED.delay(2);
-  }else if(mode == MODE_KNIGHT2){
-    knightRider2();
-    checkNewMode();
-    FastLED.show();  
-    FastLED.delay(2);
-  }else if(mode == MODE_FIRE){
-    checkNewMode();
-    EVERY_N_MILLISECONDS( 5 ) {
-      Fire2012();
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
     }
-    FastLED.show();
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+
+      if (rxValue.length() > 0) {
+        Serial.println("*********");
+        for (int i = 0; i < rxValue.length(); i++)
+          Serial.print(rxValue[i]);
+
+        Serial.println();
+        Serial.println("*********");
+        if (deviceConnected) {
+          respond(rxValue);
+        }
+      }
+    }
+};
+
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Welcome to AlfaLEDs");
+  
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  
+  FastLED.setBrightness(brightness);
+  
+  // Create the BLE Device
+  BLEDevice::init("AlfaLEDs");
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pTxCharacteristic = pService->createCharacteristic(
+                    CHARACTERISTIC_UUID_TX,
+                    BLECharacteristic::PROPERTY_NOTIFY
+                  );
+                      
+  pTxCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(
+                       CHARACTERISTIC_UUID_RX,
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+
+  pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  pServer->getAdvertising()->addServiceUUID(pService->getUUID());
+  pServer->getAdvertising()->start();
+  Serial.println("Waiting a client connection to notify...");
+}
+
+typedef void (*SimplePatternList[])();
+SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
+
+
+void loop() {
+
+  if (deviceConnected) {
+//    pTxCharacteristic->setValue(".");
+//    pTxCharacteristic->notify();
+    delay(10); // bluetooth stack will go into congestion, if too many packets are sent
   }
 
-  // Keep reading from Arduino Serial Monitor input field and send to HC-05
-//  if (Serial.available())
-//  {
-//      r =  Serial.read();
-//      BTserial.write(r);  
-//  }
-  
+    // disconnecting
+    if (!deviceConnected && oldDeviceConnected) {
+        delay(500); // give the bluetooth stack the chance to get things ready
+        pServer->startAdvertising(); // restart advertising
+        Serial.println("start advertising");
+        oldDeviceConnected = deviceConnected;
+    }
+    // connecting
+    if (deviceConnected && !oldDeviceConnected) {
+    // do stuff here on connecting
+        oldDeviceConnected = deviceConnected;
+    }
 
+    if(mode == MODE_DEMO){
+      gPatterns[gCurrentPatternNumber]();
+      FastLED.show();
+      delay(8); //FastLED.delay(8);
+      //EVERY_N_MILLISECONDS( 3 ) {
+        gHue++;
+      //} // slowly cycle the "base color" through the rainbow
+      EVERY_N_SECONDS( 5 ) { nextPattern(); } // change patterns periodically
+    }else if(mode == MODE_WHITE){
+      fill_solid(leds, NUM_LEDS, CRGB::White);
+      FastLED.show();
+    }else if(mode == MODE_KNIGHT){
+      knightRider();
+      FastLED.show();  
+      delay(2); //FastLED.delay(2);
+    }else if(mode == MODE_KNIGHT2){
+      knightRider2();
+      FastLED.show();  
+      delay(2); //FastLED.delay(2);
+    }else if(mode == MODE_FIRE){
+      //EVERY_N_MILLISECONDS( 5 ) {
+        Fire2012();
+      //}
+      FastLED.show();
+    }
+}
+
+void helpMsg() {  
+  pTxCharacteristic->setValue("Welcome to ConsultingJoe's Alfa Romeo RGB LED System\n\n*SELECT A COMMAND*\nW = White\nD = Demo Reel\nK = Knight Rider\n2 = Knight Rider (V)/Cylon\nF = Fire\n\n");
+  pTxCharacteristic->notify();
 }
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
@@ -207,7 +280,7 @@ void knightRider()
 {
   // a colored dot sweeping back and forth, with fading trails
   fadeToBlackBy( leds, NUM_LEDS, 20);
-  int pos = beatsin16(26,0,NUM_LEDS);
+  int pos = beatsin16(26,0,NUM_LEDS-1);
   leds[pos] += CRGB::Red;
 }
 
@@ -215,7 +288,7 @@ void knightRider2()
 {
   // a colored dot sweeping back and forth, with fading trails
   fadeToBlackBy( leds, NUM_LEDS, 20);
-  int pos = beatsin16(26,0,NUM_LEDS/2+1);
+  int pos = beatsin16(26,0,NUM_LEDS/2);
   leds[pos] += CRGB::Red;
   leds[NUM_LEDS-pos-1] += CRGB::Red;
 }
@@ -236,10 +309,6 @@ void bpm()
   uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
   for( int i = 0; i < NUM_LEDS; i++) { //9948
     leds[i] = ColorFromPalette(palette, gHue+(i*2), beat-gHue+(i*10));
-    if (BTserial.available()){
-      c = BTserial.read();
-      Serial.write(c);
-    }
   }
 }
 
@@ -248,12 +317,8 @@ void juggle() {
   fadeToBlackBy( leds, NUM_LEDS, 20);
   byte dothue = 0;
   for( int i = 0; i < 8; i++) {
-    leds[beatsin16(i+7,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
+    leds[beatsin16(i+6,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
     dothue += 32;
-    if (BTserial.available()){
-      c = BTserial.read();
-      Serial.write(c);
-    }
   }
 }
 
@@ -264,7 +329,7 @@ void Fire2012()
 
   // Step 1.  Cool down every cell a little
     for( int i = 0; i < NUM_LEDS; i++) {
-      heat[i] = qsub8( heat[i],  random8(0, ((COOLING * 10) / NUM_LEDS) + 2));
+      heat[i] = qsub8( heat[i],  random8(0, ((COOLING * 10) / NUM_LEDS) + 1));
     }
   
     // Step 2.  Heat from each cell drifts 'up' and diffuses a little
@@ -279,7 +344,7 @@ void Fire2012()
     }
 
     // Step 4.  Map from heat cells to LED colors
-    for( int j = 0; j < NUM_LEDS/2+1; j++) {
+    for( int j = 0; j < NUM_LEDS/2; j++) {
       CRGB color = HeatColor( heat[j]);
       int pixelnumber;
       if( gReverseDirection ) {

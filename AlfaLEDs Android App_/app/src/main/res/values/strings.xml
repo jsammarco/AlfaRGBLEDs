@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">AlfaLEDs</string>
+    <string name="devices">Bluetooth AlfaLEDs</string>
+
+    <string name="location_permission_title">Location permission required</string>
+    <string name="location_permission_message">This app does not use location information, but scanning for AlfaLEDs devices requires this permission</string>
+
+    <string name="location_denied_title">Location permission denied</string>
+    <string name="location_denied_message">As location permission has not been granted, this app cannot scan for AlfaLEDs devices.</string>
+    <string name="pairing_request">PAIRING requested\n-> Perform pairing steps. Connect again</string>
+    <string name="knight_rider">Knight Rider</string>
+    <string name="knight_rider_2">Knight Rider 2 (V)</string>
+    <string name="demo_reel">Demo Reel</string>
+    <string name="white">White</string>
+    <string name="brightness">Brightness</string>
+    <string name="fire">Fire</string>
+
+</resources>

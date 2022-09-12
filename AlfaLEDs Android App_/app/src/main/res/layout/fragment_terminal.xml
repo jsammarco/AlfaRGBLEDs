@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/receive_text"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:freezesText="true"
+        android:gravity="bottom"
+        android:scrollbars="vertical"
+        android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+    <View
+        android:layout_width="match_parent"
+        android:background="?android:attr/listDivider"
+        android:layout_height="2dp" />
+
+    <Button
+        android:id="@+id/knight_rider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/knight_rider" />
+
+    <Button
+        android:id="@+id/knight_rider2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/knight_rider_2" />
+
+    <Button
+        android:id="@+id/demo_reel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/demo_reel" />
+
+    <Button
+        android:id="@+id/fire"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/fire" />
+
+    <Button
+        android:id="@+id/white"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/white" />
+
+    <TextView
+        android:id="@+id/textView2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/brightness" />
+
+    <SeekBar
+        android:id="@+id/brightness"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:max="100" />
+
+</LinearLayout>
+
